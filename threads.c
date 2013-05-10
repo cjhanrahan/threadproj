@@ -12,11 +12,15 @@
 #define _XOPEN_SOURCE
 #include <ucontext.h>
 
-static ucontext_t ctx[3];
+#define MAX_THREADS 5
+
+static ucontext_t ctx[MAX_THREADS];
 
 static void test_thread(void);
 static int thread = 0;
 void thread_exit(int);
+int get_newthread(int);
+int get_prevthread(int);
 
 // This is the main thread
 // In a real program, it should probably start all of the threads and then wait for them to finish
@@ -26,9 +30,10 @@ int main(void) {
     
     printf("Main calling thread_create\n");
 
-    // Start one other thread
-    thread_create(&test_thread);
-    
+    // Start n other threads
+    int i;
+    for (i = 0; i < MAX_THREADS; i++) thread_create(&test_thread);
+
     printf("Main returned from thread_create\n");
 
     // Loop, doing a little work then yielding to the other thread
@@ -67,13 +72,13 @@ int thread_yield() {
     int old_thread = thread;
     
     // This is the scheduler, it is a bit primitive right now
-    thread = 1-thread;
+    thread = get_prevthread(thread);
 
     printf("Thread %d yielding to thread %d\n", old_thread, thread);
     printf("Thread %d calling swapcontext\n", old_thread);
     
     // This will stop us from running and restart the other thread
-    swapcontext(&ctx[old_thread], &ctx[thread]);
+    swapcontext(&ctx[old_thread], &ctx[thread]);  //ctx[old_thread].uc_link
 
     // The other thread yielded back to us
     printf("Thread %d back in thread_yield\n", thread);
@@ -81,7 +86,7 @@ int thread_yield() {
 
 // Create a thread
 int thread_create(int (*thread_function)(void)) {
-    int newthread = 1-thread;
+    int newthread = get_newthread(thread);
     
     printf("Thread %d in thread_create\n", thread);
     
@@ -96,11 +101,23 @@ int thread_create(int (*thread_function)(void)) {
 
     // This is the context that will run when this thread exits
     ctx[newthread].uc_link = &ctx[thread];
-
+    thread = newthread;
     // Now create the new context and specify what function it should run
     makecontext(&ctx[newthread], test_thread, 0);
     
     printf("Thread %d done with thread_create\n", thread);
+}
+
+int get_newthread(int thread) {
+    int tmp_thread = thread + 1;
+    if (tmp_thread >= MAX_THREADS) tmp_thread = 0;
+    return tmp_thread;
+}
+
+int get_prevthread(int thread) {
+    int tmp_thread = thread - 1;
+    if (tmp_thread < 0) tmp_thread = MAX_THREADS - 1;
+    return tmp_thread;
 }
 
 // This doesn't do anything at present
