@@ -13,14 +13,17 @@
 #include <ucontext.h>
 
 #define MAX_THREADS 5
+#define NUM_TICKETS 15
 
 static ucontext_t ctx[MAX_THREADS];
+static int ticket[NUM_TICKETS];
 
 static void test_thread(void);
 static int thread = 0;
 void thread_exit(int);
 int get_newthread(int);
 int get_prevthread(int);
+int get_randthread();
 
 // This is the main thread
 // In a real program, it should probably start all of the threads and then wait for them to finish
@@ -33,7 +36,15 @@ int main(void) {
     // Start n other threads
     int i;
     for (i = 0; i < MAX_THREADS; i++) thread_create(&test_thread);
-
+    for (i = 0; i < NUM_TICKETS; i++) ticket[i] = i%MAX_THREADS;
+    // For testing
+    ticket[0] = 2;
+    ticket[1] = 2;
+    ticket[5] = 2;
+    ticket[6] = 2;
+    ticket[8] = 2;
+    
+    srand(time(NULL));
     printf("Main returned from thread_create\n");
 
     // Loop, doing a little work then yielding to the other thread
@@ -72,7 +83,7 @@ int thread_yield() {
     int old_thread = thread;
     
     // This is the scheduler, it is a bit primitive right now
-    thread = get_prevthread(thread);
+    thread = get_randthread(); // get_prevthread(thread);
 
     printf("Thread %d yielding to thread %d\n", old_thread, thread);
     printf("Thread %d calling swapcontext\n", old_thread);
@@ -118,6 +129,10 @@ int get_prevthread(int thread) {
     int tmp_thread = thread - 1;
     if (tmp_thread < 0) tmp_thread = MAX_THREADS - 1;
     return tmp_thread;
+}
+
+int get_randthread() {
+    return ticket[rand() % NUM_TICKETS];
 }
 
 // This doesn't do anything at present
