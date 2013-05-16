@@ -12,8 +12,14 @@
 #define _XOPEN_SOURCE
 #include <ucontext.h>
 
+#include <sys/time.h>
+#include <unistd.h>
+#include <signal.h>
+
+// 5 threads, 10 tickets, switching every 1 ms
 #define MAX_THREADS 5
-#define NUM_TICKETS 15
+#define NUM_TICKETS 10
+#define QUANT_MS 1
 
 static ucontext_t ctx[MAX_THREADS];
 static int ticket[NUM_TICKETS];
@@ -21,6 +27,7 @@ static int ticket[NUM_TICKETS];
 static void test_thread(void);
 static int thread = 0;
 void thread_exit(int);
+int thread_switch();
 int get_newthread(int);
 int get_prevthread(int);
 int get_randthread();
@@ -34,28 +41,37 @@ int main(void) {
     printf("Main calling thread_create\n");
 
     // Start n other threads
+    struct itimerval timer;
     int i;
     for (i = 0; i < MAX_THREADS; i++) thread_create(&test_thread);
     for (i = 0; i < NUM_TICKETS; i++) ticket[i] = i%MAX_THREADS;
-    // For testing
-    ticket[0] = 2;
-    ticket[1] = 2;
-    ticket[5] = 2;
-    ticket[6] = 2;
-    ticket[8] = 2;
+    // For testing different weights
+    ticket[0] = 1;
+    ticket[2] = 1;
+    ticket[4] = 1;
+    ticket[8] = 1;
     
-    srand(time(NULL));
     printf("Main returned from thread_create\n");
 
-    // Loop, doing a little work then yielding to the other thread
-    while(1) {
-        printf("Main calling thread_yield\n");
-        
-        thread_yield();
-        
-        printf("Main returned from thread_yield\n");
+    // signal & timer setup
+    srand(time(NULL));
+    if (signal(SIGALRM, (void (*)(int)) thread_switch) == SIG_ERR) {
+      perror("Signal failed.");
+      exit(1);
     }
-
+    timer.it_value.tv_sec = QUANT_MS / 1000;
+    timer.it_value.tv_usec = QUANT_MS * 1000;
+    timer.it_interval.tv_sec = QUANT_MS / 1000;
+    timer.it_interval.tv_usec = QUANT_MS * 1000;
+    if (setitimer(ITIMER_REAL, &timer, NULL) < 0) {
+      perror("itimer not set.");
+      exit(1);
+    }
+     
+    while(1) {
+      test_thread();
+    }
+    
     // We should never get here
     exit(0);
     
@@ -64,44 +80,36 @@ int main(void) {
 // This is the thread that gets started by thread_create
 static void test_thread(void) {
     printf("In test_thread\n");
-
-    // Loop, doing a little work then yielding to the other thread
+    int i;
+    // Loop, doing a little work
     while(1) {
-        
-        printf("Test_thread calling thread_yield\n");
-        
-        thread_yield();
-        
-        printf("Test_thread returned from thread_yield\n");
+        for (i = 0; i < 10000; i++) {
+          usleep(QUANT_MS * 100);
+          printf("Thread %d: i = %d\n", thread, i);
+        }
     }
     
     thread_exit(0);
 }
 
-// Yield to another thread
-int thread_yield() {
+// Switch to another thread
+int thread_switch() {
     int old_thread = thread;
     
-    // This is the scheduler, it is a bit primitive right now
+    // This is the lottery scheduler
     thread = get_randthread(); // get_prevthread(thread);
 
-    printf("Thread %d yielding to thread %d\n", old_thread, thread);
-    printf("Thread %d calling swapcontext\n", old_thread);
+    printf("Interrupting thread %d for thread %d\n", old_thread, thread);
     
-    // This will stop us from running and restart the other thread
+    // This will stop the current thread from running and restart the other thread
     swapcontext(&ctx[old_thread], &ctx[thread]);  //ctx[old_thread].uc_link
-
-    // The other thread yielded back to us
-    printf("Thread %d back in thread_yield\n", thread);
 }
 
 // Create a thread
 int thread_create(int (*thread_function)(void)) {
     int newthread = get_newthread(thread);
     
-    printf("Thread %d in thread_create\n", thread);
-    
-    printf("Thread %d calling getcontext and makecontext\n", thread);
+    printf("Thread %d in thread_create\n", newthread);
 
     // First, create a valid execution context the same as the current one
     getcontext(&ctx[newthread]);
@@ -131,6 +139,7 @@ int get_prevthread(int thread) {
     return tmp_thread;
 }
 
+// 'Draw' random thread
 int get_randthread() {
     return ticket[rand() % NUM_TICKETS];
 }
